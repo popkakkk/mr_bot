@@ -1,0 +1,58 @@
+repositories:
+  libraries:
+    - explore-go
+    - proto
+    # - library-java-utility
+  services:
+    # - ms-account-go
+    # - ms-bff-go
+    # - ms-bbff-go
+    # - ms-payment
+    - ms-self-serve
+    - ms-self-serve-batch
+
+branch_strategies:
+  strategy_a:
+    repos: [ms-self-serve, ms-self-serve-batch]
+    source_branch: sprint4/all
+    flow: [sprint4/all, ss-dev, sit2]
+  strategy_b:
+    repos: [explore-go, proto, library-java-utility, ms-account-go, ms-bff-go, ms-bbff-go, ms-payment]
+    source_branch: ss/sprint4/all
+    flow: [ss/sprint4/all, ss-dev, dev2, sit2]
+
+environments:
+  dev2:
+    triggered_by: [ss-dev, dev2]
+    wait_for_deployment: false
+  sit2:
+    triggered_by: [sit2]
+    wait_for_deployment: true
+
+gitlab:
+  base_url: "https://gitlab.orbitdigital.co.th"
+  api_token: "${GITLAB_TOKEN}"
+  project_group: "xplore"
+
+discord:
+  webhook_url: "${DISCORD_WEBHOOK_URL}"
+  channels:
+    deployment: "deployment-alerts"
+    success: "deployment-success"
+    errors: "deployment-errors"
+  mentions:
+    critical_failure: "@DevOps @TeamLead"
+    success: "@dev-team"
+
+automation:
+  retry_attempts: 3
+  retry_delay: 30
+  pipeline_timeout: 1800
+  deployment_timeout: 3600
+  auto_merge: true
+  skip_manual_approval: true
+
+logging:
+  level: "INFO"
+  file: "mr_automation.log"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
