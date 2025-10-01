@@ -164,6 +164,15 @@ def process_intermediate_commits_directly(config: Dict, dry_run: bool = False, r
                 if has_pending_previous_commits:
                     continue
                 
+                # ตรวจสอบว่า target branch นี้ trigger environment ที่มี wait_for_deployment = true หรือไม่
+                should_stop_at_target = False
+                for env_name, env_config in config.get('environments', {}).items():
+                    triggered_by = env_config.get('triggered_by', [])
+                    wait_for_deployment = env_config.get('wait_for_deployment', False)
+                    if target_branch in triggered_by and wait_for_deployment:
+                        should_stop_at_target = True
+                        break
+                
                 # Check for commits
                 has_commits, commit_count = gitlab_client.validate_commits(repo, source_branch, target_branch)
                 
@@ -200,14 +209,21 @@ def process_intermediate_commits_directly(config: Dict, dry_run: bool = False, r
                         else:
                             console.print(f"    ❌ Failed to create MR")
                         
-                        # หยุดสร้าง MR เพิ่มเติมสำหรับ repo นี้เมื่อเจอ branch ที่มี commits
-                        # เพื่อให้ไป merge แบบเป็นลำดับ
+                        # หยุดสร้าง MR เพิ่มเติมสำหรับ repo นี้เมื่อเจอ branch ที่มี commits หรือถึง deploy branch
+                        if should_stop_at_target:
+                            console.print(f"    ⏸️  Stopping at deploy branch {target_branch} due to wait_for_deployment=true")
                         break
                     else:
                         console.print(f"    🚀 Would create MR: {source_branch} → {target_branch}")
+                        if should_stop_at_target:
+                            console.print(f"    ⏸️  Would stop at deploy branch {target_branch} due to wait_for_deployment=true")
                         break  # ใน dry run mode ก็ต้อง break เพื่อแสดงว่าจะทำ sequential
                 else:
                     console.print(f"  {source_branch} → {target_branch}: ✅ up to date")
+                    # แม้ไม่มี commits ก็ยังต้องตรวจสอบว่าต้องหยุดที่ target branch นี้หรือไม่
+                    if should_stop_at_target:
+                        console.print(f"    ⏸️  Stopping at deploy branch {target_branch} due to wait_for_deployment=true")
+                        break
                     
         except Exception as e:
             console.print(f"  [red]❌ Error processing {repo}: {e}[/red]")
@@ -640,8 +656,14 @@ class MRDeploymentOrchestrator:
                         return False
                 
                 # Check for additional commits that need to be merged to final target
-                if env_name != "unknown" and self.check_additional_commits:
+                # Only process additional commits if wait_for_deployment is False for this environment
+                env_config = self.config.get('environments', {}).get(env_name, {})
+                should_wait_for_deployment = env_config.get('wait_for_deployment', False)
+                
+                if env_name != "unknown" and self.check_additional_commits and not should_wait_for_deployment:
                     self._process_additional_commits(successful_repos, mr_statuses)
+                elif should_wait_for_deployment:
+                    console.print(f"[yellow]Stopping at deploy branch due to wait_for_deployment=true for {env_name}[/yellow]")
             
             return len(successful_repos) > 0
             

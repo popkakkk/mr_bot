@@ -686,6 +686,30 @@ class MRAutomation:
         
         return progressive_mrs
     
+    def _should_stop_at_deploy_branch(self, target_branch: str) -> bool:
+        """
+        ตรวจสอบว่า target branch นี้ trigger environment ที่มี wait_for_deployment = true หรือไม่
+        
+        Args:
+            target_branch: branch ที่จะ merge เข้า
+        
+        Returns:
+            True ถ้าต้องหยุดที่ branch นี้เนื่องจาก wait_for_deployment = true
+        """
+        try:
+            for env_name, env_config in self.config.get('environments', {}).items():
+                triggered_by = env_config.get('triggered_by', [])
+                wait_for_deployment = env_config.get('wait_for_deployment', False)
+                
+                if target_branch in triggered_by and wait_for_deployment:
+                    logger.debug(f"Target branch {target_branch} triggers {env_name} with wait_for_deployment=true")
+                    return True
+            
+            return False
+        except Exception as e:
+            logger.debug(f"Error checking deploy branch stop condition for {target_branch}: {e}")
+            return False
+    
     def create_complete_flow_merge_requests(self, repos: List[str], mr_title: str = "complete_flow") -> List[MRStatus]:
         """
         สร้าง MR ทั้งหมดตาม flow ที่กำหนดไว้ไปจนถึงปลาย branch โดยไม่หยุดที่ ss-dev
@@ -712,6 +736,9 @@ class MRAutomation:
                     source_branch = flow[i]
                     target_branch = flow[i + 1]
                     
+                    # ตรวจสอบว่า target branch นี้ trigger environment ที่มี wait_for_deployment = true หรือไม่
+                    should_stop_at_target = self._should_stop_at_deploy_branch(target_branch)
+                    
                     # ตรวจสอบว่า branches มีอยู่จริง
                     if not self.gitlab.branch_exists(repo, source_branch):
                         logger.warning(f"Source branch {source_branch} does not exist in {repo}")
@@ -729,6 +756,10 @@ class MRAutomation:
                         existing_mrs = self._check_existing_mr(repo, source_branch, target_branch)
                         if existing_mrs:
                             logger.info(f"MR already exists for {repo}: {source_branch} -> {target_branch}")
+                            # ถ้าต้องหยุดที่ target branch นี้ ให้ break ออกจาก loop
+                            if should_stop_at_target:
+                                logger.info(f"Stopping at deploy branch {target_branch} due to wait_for_deployment=true")
+                                break
                             continue
                         
                         # สร้าง MR ใหม่
@@ -755,8 +786,17 @@ class MRAutomation:
                             logger.error(f"❌ Failed to create complete flow MR for {repo}: {source_branch} -> {target_branch}")
                         
                         complete_flow_mrs.append(mr_status)
+                        
+                        # ถ้าต้องหยุดที่ target branch นี้ ให้ break ออกจาก loop
+                        if should_stop_at_target:
+                            logger.info(f"Stopping at deploy branch {target_branch} due to wait_for_deployment=true")
+                            break
                     else:
                         logger.debug(f"No commits to merge for {repo}: {source_branch} -> {target_branch}")
+                        # แม้ไม่มี commits ก็ยังต้องตรวจสอบว่าต้องหยุดที่ target branch นี้หรือไม่
+                        if should_stop_at_target:
+                            logger.info(f"Stopping at deploy branch {target_branch} due to wait_for_deployment=true")
+                            break
                         
             except Exception as e:
                 logger.error(f"Error creating complete flow MRs for {repo}: {e}")

@@ -542,11 +542,18 @@ class MRAutomation:
                     
                     next_branch = flow[i + 2]
                     
+                    # ตรวจสอบว่า next_branch trigger environment ที่มี wait_for_deployment = true หรือไม่
+                    should_stop_at_next = self._should_stop_at_deploy_branch(next_branch)
+                    
                     has_commits, commit_count = self.gitlab.validate_commits(repo, target_branch, next_branch)
                     
                     if has_commits:
                         if self._check_existing_mr(repo, target_branch, next_branch):
                             logger.info(f"MR already exists for {repo}: {target_branch} -> {next_branch}")
+                            # ถ้าต้องหยุดที่ next_branch นี้ ให้ break
+                            if should_stop_at_next:
+                                logger.info(f"Stopping at deploy branch {next_branch} due to wait_for_deployment=true")
+                                break
                             continue
                         
                         automation_config = self.config.get_automation_config()
@@ -571,6 +578,10 @@ class MRAutomation:
                             mr_status.error = "Failed to create progressive MR"
                         
                         progressive_mrs.append(mr_status)
+                        
+                        # ถ้าต้องหยุดที่ next_branch นี้ ให้ break
+                        if should_stop_at_next:
+                            logger.info(f"Stopping at deploy branch {next_branch} due to wait_for_deployment=true")
                         break
                         
             except Exception as e:
@@ -578,6 +589,31 @@ class MRAutomation:
                 continue
         
         return progressive_mrs
+    
+    def _should_stop_at_deploy_branch(self, target_branch: str) -> bool:
+        """
+        ตรวจสอบว่า target branch นี้ trigger environment ที่มี wait_for_deployment = true หรือไม่
+        
+        Args:
+            target_branch: branch ที่จะ merge เข้า
+        
+        Returns:
+            True ถ้าต้องหยุดที่ branch นี้เนื่องจาก wait_for_deployment = true
+        """
+        try:
+            config_dict = self.config.load_config()
+            for env_name, env_config in config_dict.get('environments', {}).items():
+                triggered_by = env_config.get('triggered_by', [])
+                wait_for_deployment = env_config.get('wait_for_deployment', False)
+                
+                if target_branch in triggered_by and wait_for_deployment:
+                    logger.debug(f"Target branch {target_branch} triggers {env_name} with wait_for_deployment=true")
+                    return True
+            
+            return False
+        except Exception as e:
+            logger.debug(f"Error checking deploy branch stop condition for {target_branch}: {e}")
+            return False
     
     def _is_branch_merged_to_target(self, repo_name: str, source_branch: str, target_branch: str) -> bool:
         """Check if source branch is merged to target branch."""
